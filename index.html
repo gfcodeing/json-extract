@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSON 精简提取</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e4e9;
+    --text: #24292f;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #16a34a;
+    --success-bg: #ecfdf5;
+    --error: #dc2626;
+    --error-bg: #fef2f2;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .container { width: 100%; max-width: 760px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-title .hint { font-size: 12px; font-weight: 400; color: var(--muted); }
+  textarea {
+    width: 100%;
+    min-height: 140px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: Consolas, Monaco, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+    transition: border-color .15s;
+  }
+  textarea:focus { border-color: var(--primary); }
+  textarea[readonly] { background: #fafbfc; }
+  .btn-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .15s, opacity .15s;
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-success:hover { opacity: .9; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .msg {
+    display: none;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.6;
+    word-break: break-all;
+  }
+  .msg.ok { display: block; background: var(--success-bg); color: var(--success); }
+  .msg.err { display: block; background: var(--error-bg); color: var(--error); }
+  .output-card { display: none; }
+  .output-card.show { display: block; }
+  .fields {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .field-tag {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .field-tag.ok { border-color: #bbf7d0; background: var(--success-bg); color: var(--success); }
+  .field-tag.miss { border-color: #fecaca; background: var(--error-bg); color: var(--error); }
+  footer { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>JSON 精简提取</h1>
+  <div class="subtitle">粘贴完整或混杂文本，自动提取所需字段并压缩为一行。纯本地处理，不上传任何数据。</div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>输入</span>
+      <span class="hint">支持前后有多余空行 / 混杂其他字符的文本</span>
+    </div>
+    <textarea id="input" placeholder='在此粘贴 JSON，例如：
+blah blah {"accessToken":"xxx","expires":123,"sessionToken":"yyy","user":{...},"account":{...}}, 后面随便什么'></textarea>
+    <div class="btn-row">
+      <button class="btn-primary" id="btnExtract">提取</button>
+      <button class="btn-ghost" id="btnClear">清空</button>
+    </div>
+    <div class="msg" id="inputMsg"></div>
+    <div class="fields" id="fieldTags"></div>
+  </div>
+
+  <div class="card output-card" id="outputCard">
+    <div class="card-title">
+      <span>输出（单行压缩）</span>
+      <span class="hint" id="charCount"></span>
+    </div>
+    <textarea id="output" readonly></textarea>
+    <div class="btn-row">
+      <button class="btn-success" id="btnCopy">复制</button>
+    </div>
+    <div class="msg ok" id="copyMsg">已复制到剪贴板</div>
+  </div>
+
+  <footer>保留字段：accessToken · expires · sessionToken · user · account</footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var REQUIRED = ['accessToken', 'expires', 'sessionToken', 'user', 'account'];
+  var OBJECT_FIELDS = ['user', 'account'];
+
+  var $input = document.getElementById('input');
+  var $output = document.getElementById('output');
+  var $inputMsg = document.getElementById('inputMsg');
+  var $copyMsg = document.getElementById('copyMsg');
+  var $outputCard = document.getElementById('outputCard');
+  var $fieldTags = document.getElementById('fieldTags');
+  var $charCount = document.getElementById('charCount');
+  var $btnExtract = document.getElementById('btnExtract');
+  var $btnClear = document.getElementById('btnClear');
+  var $btnCopy = document.getElementById('btnCopy');
+
+  function setMessage(el, text, isError) {
+    el.textContent = text || '';
+    el.className = 'msg' + (text ? (isError ? ' err' : ' ok') : '');
+  }
+
+  // 从任意文本中扫描出所有顶层的 JSON 对象（支持混在杂文本中的情况）。
+  // 某段子串解析成功后跳过其内部，避免把嵌套子对象重复识别为独立 JSON。
+  function extractJsonObjects(text) {
+    var results = [];
+    for (var i = 0; i < text.length; i++) {
+      if (text.charAt(i) !== '{') continue;
+      var end = findBalancedEnd(text, i);
+      if (end === -1) continue;
+      var candidate = text.slice(i, end + 1);
+      var obj = null;
+      try { obj = JSON.parse(candidate); } catch (e) { /* 继续找下一个 */ }
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        results.push(obj);
+        i = end; // 跳过整个已识别对象，内部嵌套的 {} 不再单独计数
+      }
+    }
+    return results;
+  }
+
+  // 从 start（指向 '{'）开始做括号配对扫描，注意跳过字符串字面量
+  function findBalancedEnd(text, start) {
+    var depth = 0, inStr = false, esc = false;
+    for (var j = start; j < text.length; j++) {
+      var c = text.charAt(j);
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+      } else {
+        if (c === '"') inStr = true;
+        else if (c === '{') depth++;
+        else if (c === '}') {
+          depth--;
+          if (depth === 0) return j;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // 检查字段是否齐全有效
+  function checkFields(obj) {
+    var missing = [];
+    for (var i = 0; i < REQUIRED.length; i++) {
+      var key = REQUIRED[i];
+      var val = obj[key];
+      if (val === undefined || val === null || val === '') {
+        missing.push(key);
+        continue;
+      }
+      if (OBJECT_FIELDS.indexOf(key) !== -1 &&
+          (typeof val !== 'object' || Array.isArray(val))) {
+        missing.push(key + '（非对象）');
+      }
+    }
+    return missing;
+  }
+
+  function renderFieldTags(obj) {
+    var html = '';
+    for (var i = 0; i < REQUIRED.length; i++) {
+      var key = REQUIRED[i];
+      var ok = obj && key in obj && obj[key] !== null && obj[key] !== undefined && obj[key] !== '';
+      if (ok && OBJECT_FIELDS.indexOf(key) !== -1) {
+        ok = typeof obj[key] === 'object' && !Array.isArray(obj[key]);
+      }
+      html += '<span class="field-tag ' + (ok ? 'ok' : 'miss') + '">' + key + '</span>';
+    }
+    $fieldTags.innerHTML = html;
+  }
+
+  function extract() {
+    var raw = $input.value;
+    // 自动去除前后无效空行 / 空白（扫描本身也兼容，这里显式 trim 一下）
+    var text = raw.replace(/^\s+|\s+$/g, '');
+    $copyMsg.className = 'msg';
+
+    if (!text) {
+      renderFieldTags(null);
+      setMessage($inputMsg, '请先输入内容', true);
+      $outputCard.classList.remove('show');
+      return;
+    }
+
+    // 先尝试整体直接解析（最快路径）
+    var candidates = [];
+    try {
+      var direct = JSON.parse(text);
+      if (direct && typeof direct === 'object' && !Array.isArray(direct)) candidates.push(direct);
+    } catch (e) { /* 整体不是纯 JSON，走混杂扫描 */ }
+
+    if (candidates.length === 0) {
+      candidates = extractJsonObjects(text);
+    }
+
+    if (candidates.length === 0) {
+      renderFieldTags(null);
+      setMessage($inputMsg, '未在输入内容中找到有效的 JSON 对象，请检查格式', true);
+      $outputCard.classList.remove('show');
+      return;
+    }
+
+    if (candidates.length > 1) {
+      renderFieldTags(null);
+      setMessage($inputMsg, '识别到 ' + candidates.length + ' 个 JSON 对象，当前输入非单个 JSON，无法识别。请只保留一个 JSON 后重试', true);
+      $outputCard.classList.remove('show');
+      return;
+    }
+
+    var best = candidates[0];
+    var bestMissing = checkFields(best);
+
+    renderFieldTags(best);
+
+    if (bestMissing.length > 0) {
+      setMessage($inputMsg, '信息不完整：缺少字段 ' + bestMissing.join('、'), true);
+      $outputCard.classList.remove('show');
+      return;
+    }
+
+    setMessage($inputMsg, '提取成功', false);
+
+    var result = {
+      accessToken: best.accessToken,
+      expires: best.expires,
+      sessionToken: best.sessionToken,
+      user: best.user,
+      account: best.account
+    };
+    var compact = JSON.stringify(result);
+    $output.value = compact;
+    $charCount.textContent = compact.length + ' 字符';
+    $outputCard.classList.add('show');
+  }
+
+  function copyOutput() {
+    var text = $output.value;
+    if (!text) return;
+    function done() {
+      $copyMsg.className = 'msg ok';
+      var old = $btnCopy.textContent;
+      $btnCopy.textContent = '已复制 ✓';
+      setTimeout(function () { $btnCopy.textContent = old; }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+
+  function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {
+      $output.removeAttribute('readonly');
+      $output.select();
+    }
+    document.body.removeChild(ta);
+  }
+
+  $btnExtract.addEventListener('click', extract);
+  $btnCopy.addEventListener('click', copyOutput);
+  $btnClear.addEventListener('click', function () {
+    $input.value = '';
+    $output.value = '';
+    $inputMsg.className = 'msg';
+    $copyMsg.className = 'msg';
+    $fieldTags.innerHTML = '';
+    $outputCard.classList.remove('show');
+    $input.focus();
+  });
+  // 粘贴后自动提取
+  $input.addEventListener('paste', function () {
+    setTimeout(extract, 0);
+  });
+  // Ctrl+Enter 快捷提取
+  $input.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      extract();
+    }
+  });
+})();
+</script>
+</body>
+</html>
